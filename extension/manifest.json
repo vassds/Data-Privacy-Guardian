@@ -1,0 +1,40 @@
+{
+  "manifest_version": 3,
+  "name": "Data Privacy Guardian",
+  "version": "1.0.0",
+  "description": "High-performance privacy engine using Rust and WASM.",
+  "permissions": [
+    "webRequest",
+    "webRequestBlocking",
+    "cookies",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "background": {
+    "scripts": ["background.bundle.js"],
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.bundle.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "guardian@dataprivacy.internal",
+      "strict_min_version": "109.0"
+    }
+  }
+}

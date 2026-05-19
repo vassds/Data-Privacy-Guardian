@@ -1,0 +1,7 @@
+﻿node_modules/
+target/
+pkg/
+dist/
+.DS_Store
+*.zip
+*.xpi
