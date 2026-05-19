@@ -3,29 +3,31 @@ import init, { PrivacyEngine } from '../../../core/pkg/dpg_core.js';
 
 let engine: PrivacyEngine | null = null;
 const blockedCounts: Record<number, number> = {};
-// CHANGED: Use an Array instead of a Set to store every single request
 const tabBlockedDomains: Record<number, string[]> = {};
 
 const FALLBACK_RULES = `google-analytics.com\nfacebook.net\nscorecardresearch.com\ndoubleclick.net`;
 
 async function syncBlocklist() {
-  console.log("Data Privacy Guardian: Syncing live blocklist...");
+  console.log("Data Privacy Guardian: Syncing live blocklist from custom Threat Intel API...");
   try {
-    const res = await fetch("https://raw.githubusercontent.com/StevenBlack/hosts/master/alternates/tracking-only/hosts");
+    // YOUR CUSTOM PRODUCTION URL IS INTEGRATED HERE
+    const res = await fetch("https://raw.githubusercontent.com/vassds/dpg-threat-intel/refs/heads/main/master_blocklist.txt");
     const text = await res.text();
     
+    // Your Python script already cleaned the 0.0.0.0 prefixes, so we just split the text into lines
     const domains = text.split('\n')
-        .filter(line => line.startsWith('0.0.0.0'))
-        .map(line => line.replace('0.0.0.0 ', '').trim())
-        .join('\n');
+        .map(line => line.trim())
+        .filter(line => line.length > 0);
+        
+    const finalRuleString = domains.join('\n');
 
     await browser.storage.local.set({ 
-        'savedRules': domains, 
+        'savedRules': finalRuleString, 
         'lastSyncTime': Date.now() 
     });
     
-    if (engine) engine.load_rules(domains);
-    console.log("Sync Complete!");
+    if (engine) engine.load_rules(finalRuleString);
+    console.log(`Sync Complete! Loaded ${domains.length} threat rules into Rust memory.`);
   } catch (e) {
     console.error("Failed to sync remote list, using cache/fallback.", e);
   }
@@ -77,17 +79,17 @@ browser.webRequest.onBeforeRequest.addListener(
             try {
                 const dnsRecord = await browser.dns.resolve(targetHost, ["canonical_name"]);
                 if (dnsRecord.canonicalName) {
-                    targetHost = dnsRecord.canonicalName;
+                    urlObj.hostname = dnsRecord.canonicalName; 
                 }
             } catch (e) {}
         }
 
-        const analysis: any = engine.analyze_url(`https://${targetHost}`);
+        // Pass the entire reconstructed URL to trigger Rust's heuristic Regex engine
+        const analysis: any = engine.analyze_url(urlObj.href);
 
         if (analysis && analysis.is_tracker) {
             blockedCounts[details.tabId] = (blockedCounts[details.tabId] || 0) + 1;
             
-            // CHANGED: Initialize as an array and push every single blocked domain
             if (!tabBlockedDomains[details.tabId]) tabBlockedDomains[details.tabId] = [];
             tabBlockedDomains[details.tabId].push(analysis.rule_matched);
             
@@ -121,7 +123,6 @@ browser.runtime.onMessage.addListener(async (message: any, sender: any) => {
         
         return {
             enabled: isEnabled,
-            // CHANGED: Simply return the array, no longer need to convert from a Set
             blockedList: tabBlockedDomains[currentTabId] || [],
             totalBlocked: blockedCounts[currentTabId] || 0
         };
