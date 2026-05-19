@@ -2,66 +2,75 @@ import browser from 'webextension-polyfill';
 import init, { PrivacyEngine } from '../../../core/pkg/dpg_core.js';
 
 let engine: PrivacyEngine | null = null;
-const blockedCounts: Record<number, number> = {};
 
-// We use a Promise to ensure the engine is fully loaded before processing requests
-let engineInitPromise: Promise<void> | null = null;
+// Upgraded State Management: Track domains and allowlist status per tab
+interface TabState {
+  enabled: boolean;
+  blockedDomains: Set<string>;
+}
+const tabStates: Record<number, TabState> = {};
 
 async function loadWasmEngine() {
   try {
-    // In Webpack 5, the WASM file is bundled alongside the background script.
-    // Sometimes getURL fails in Firefox MV3 due to strict origin policies.
-    // We try a relative fetch first, falling back to the absolute URL.
-    console.log("Data Privacy Guardian: Attempting to load Rust engine...");
-    
     let wasmUrl = 'dpg_core_bg.wasm'; 
-    try {
-        await init(wasmUrl);
-    } catch(e) {
-        wasmUrl = browser.runtime.getURL('dpg_core_bg.wasm');
-        await init(wasmUrl);
-    }
+    try { await init(wasmUrl); } 
+    catch(e) { await init(browser.runtime.getURL('dpg_core_bg.wasm')); }
     
     engine = new PrivacyEngine();
-    console.log("Data Privacy Guardian: WASM Engine SUCCESSFULLY loaded!");
+    
+    // Simulate fetching a massive blocklist from the internet
+    const remoteBlocklist = `
+      google-analytics.com
+      facebook.net
+      scorecardresearch.com
+      doubleclick.net
+      amazon-adsystem.com
+      criteo.com
+      hotjar.com
+      outbrain.com
+    `;
+    engine.load_rules(remoteBlocklist);
+    
+    console.log("Data Privacy Guardian: Engine loaded with dynamic rules!");
   } catch (error) {
-    console.error("FATAL ERROR: Failed to load WASM Engine:", error);
+    console.error("Failed to load WASM:", error);
   }
 }
 
-// Start the initialization immediately and store the promise
-engineInitPromise = loadWasmEngine();
+loadWasmEngine();
+
+// Ensure tab state exists
+function getTabState(tabId: number): TabState {
+    if (!tabStates[tabId]) {
+        tabStates[tabId] = { enabled: true, blockedDomains: new Set() };
+    }
+    return tabStates[tabId];
+}
 
 browser.webRequest.onBeforeRequest.addListener(
-  // In MV3 blocking requests, we CANNOT use async/await here natively without returning a Promise.
-  // But returning a Promise in onBeforeRequest is only supported in specific browser versions.
-  // Therefore, if the engine isn't ready instantly, we let the very first requests pass 
-  // (to avoid breaking the web), but catch all subsequent ones.
   (details: any) => { 
-    if (!engine || details.tabId < 0) {
-        // If you see this log a lot, the WASM engine is failing to load!
-        // console.warn("Engine not ready, allowing request:", details.url);
-        return { cancel: false }; 
-    }
+    if (!engine || details.tabId < 0) return { cancel: false };
+
+    const state = getTabState(details.tabId);
+    
+    // THE KILL SWITCH: If user disabled protection for this tab, let everything through
+    if (!state.enabled) return { cancel: false };
 
     try {
         const analysis: any = engine.analyze_url(details.url);
 
         if (analysis && analysis.is_tracker) {
-            console.log(`BLOCKED: ${details.url}`);
-            blockedCounts[details.tabId] = (blockedCounts[details.tabId] || 0) + 1;
+            state.blockedDomains.add(analysis.rule_matched);
             
             browser.action.setBadgeText({
                 tabId: details.tabId,
-                text: blockedCounts[details.tabId].toString()
+                text: state.blockedDomains.size.toString()
             });
             browser.action.setBadgeBackgroundColor({ color: "#D32F2F" });
 
             return { cancel: true }; 
         }
-    } catch (e) {
-        console.error("Error analyzing URL in Rust:", e);
-    }
+    } catch (e) {}
 
     return { cancel: false };
   },
@@ -70,15 +79,37 @@ browser.webRequest.onBeforeRequest.addListener(
 );
 
 browser.tabs.onRemoved.addListener((tabId: number) => { 
-  delete blockedCounts[tabId];
+  delete tabStates[tabId];
 });
 
+// Upgraded Message Handler
 browser.runtime.onMessage.addListener(async (message: any) => { 
   if (message.action === "GET_STATUS") {
     const tabs = await browser.tabs.query({ active: true, currentWindow: true });
     const currentTabId = tabs[0]?.id;
-    return {
-      blocked: currentTabId ? (blockedCounts[currentTabId] || 0) : 0
-    };
+    if (currentTabId) {
+        const state = getTabState(currentTabId);
+        return {
+            enabled: state.enabled,
+            blockedList: Array.from(state.blockedDomains) // Sets must be converted to Arrays to send to React
+        };
+    }
+  }
+  
+  if (message.action === "TOGGLE_PROTECTION") {
+      const tabs = await browser.tabs.query({ active: true, currentWindow: true });
+      const currentTabId = tabs[0]?.id;
+      if (currentTabId) {
+          const state = getTabState(currentTabId);
+          state.enabled = !state.enabled;
+          
+          // Clear the badge if disabled
+          if (!state.enabled) {
+              browser.action.setBadgeText({ tabId: currentTabId, text: "" });
+          } else {
+              browser.action.setBadgeText({ tabId: currentTabId, text: state.blockedDomains.size.toString() });
+          }
+          return { success: true };
+      }
   }
 });

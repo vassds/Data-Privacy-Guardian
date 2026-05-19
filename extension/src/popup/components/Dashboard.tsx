@@ -1,69 +1,83 @@
 import React, { useEffect, useState } from 'react';
 import browser from 'webextension-polyfill';
 
-// Define the exact shape of our expected data
 interface StatusResponse {
-  blocked: number;
+  enabled: boolean;
+  blockedList: string[];
 }
 
 export const Dashboard: React.FC = () => {
-  const [stats, setStats] = useState<StatusResponse>({ blocked: 0 });
+  const [stats, setStats] = useState<StatusResponse>({ enabled: true, blockedList: [] });
 
   useEffect(() => {
-    async function fetchStats() {
-      try {
-        // We add 'as StatusResponse' to force TypeScript to recognize the shape of the data
-        const response = (await browser.runtime.sendMessage({ action: "GET_STATUS" })) as StatusResponse;
-        
-        if (response && typeof response.blocked === 'number') {
-          setStats({ blocked: response.blocked });
-        }
-      } catch (error) {
-        console.warn("Could not communicate with background script.", error);
-      }
-    }
     fetchStats();
   }, []);
 
-  const score = Math.max(0, 100 - stats.blocked * 5);
+  async function fetchStats() {
+    try {
+      const response = (await browser.runtime.sendMessage({ action: "GET_STATUS" })) as StatusResponse;
+      if (response && response.blockedList) {
+        setStats(response);
+      }
+    } catch (error) {
+      console.warn("Communication error", error);
+    }
+  }
+
+  async function toggleProtection() {
+      await browser.runtime.sendMessage({ action: "TOGGLE_PROTECTION" });
+      fetchStats(); // Refresh UI after toggle
+      // Ask user to reload the page for changes to take effect
+      browser.tabs.reload(); 
+  }
+
+  const score = stats.enabled ? Math.max(0, 100 - stats.blockedList.length * 5) : 0;
 
   return (
-    <div style={{
-      width: '300px',
-      padding: '20px',
-      boxSizing: 'border-box',
-      background: '#ffffff'
-    }}>
-      <h3 style={{ margin: '0 0 15px 0', color: '#1A237E' }}>Data Privacy Guardian</h3>
+    <div style={{ width: '320px', padding: '20px', boxSizing: 'border-box', background: '#ffffff' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
+          <h3 style={{ margin: 0, color: '#1A237E' }}>Privacy Guardian</h3>
+          
+          {/* THE KILL SWITCH */}
+          <button 
+            onClick={toggleProtection}
+            style={{
+                background: stats.enabled ? '#D32F2F' : '#4CAF50',
+                color: 'white', border: 'none', padding: '6px 12px', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold'
+            }}>
+              {stats.enabled ? "Disable on this site" : "Enable Protection"}
+          </button>
+      </div>
       
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        background: '#F5F5F5',
-        padding: '12px',
-        borderRadius: '6px',
-        marginBottom: '10px'
-      }}>
-        <span style={{ fontSize: '14px', fontWeight: 500 }}>Privacy Score</span>
-        <span style={{
-          fontSize: '18px',
-          fontWeight: 'bold',
-          color: score > 75 ? '#2E7D32' : score > 40 ? '#EF6C00' : '#C62828'
-        }}>{score}/100</span>
-      </div>
+      {stats.enabled ? (
+          <>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px', background: '#F5F5F5', borderRadius: '6px', marginBottom: '10px' }}>
+                <span style={{ fontWeight: 500 }}>Privacy Score</span>
+                <span style={{ fontWeight: 'bold', color: score > 75 ? '#2E7D32' : '#EF6C00' }}>{score}/100</span>
+            </div>
 
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        background: '#F5F5F5',
-        padding: '12px',
-        borderRadius: '6px'
-      }}>
-        <span style={{ fontSize: '14px', fontWeight: 500 }}>Trackers Blocked</span>
-        <span style={{ fontSize: '18px', fontWeight: 'bold', color: '#1A237E' }}>{stats.blocked}</span>
-      </div>
+            <div style={{ padding: '12px', background: '#F5F5F5', borderRadius: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontWeight: 500 }}>Threats Blocked</span>
+                    <span style={{ fontWeight: 'bold', color: '#1A237E' }}>{stats.blockedList.length}</span>
+                </div>
+                
+                {/* DOMAIN LIST VISIBILITY */}
+                <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: '120px', overflowY: 'auto', fontSize: '12px', color: '#555' }}>
+                    {stats.blockedList.map((domain, idx) => (
+                        <li key={idx} style={{ padding: '4px 0', borderBottom: '1px solid #ddd' }}>
+                            🚫 {domain}
+                        </li>
+                    ))}
+                    {stats.blockedList.length === 0 && <li>No trackers detected yet.</li>}
+                </ul>
+            </div>
+          </>
+      ) : (
+          <div style={{ padding: '20px', textAlign: 'center', background: '#FFF3E0', color: '#E65100', borderRadius: '6px' }}>
+              ⚠️ Protection is currently disabled for this website. Trackers are not being blocked.
+          </div>
+      )}
     </div>
   );
 };

@@ -1,6 +1,7 @@
 use wasm_bindgen::prelude::*;
 use url::Url;
 use serde::{Serialize, Deserialize};
+use std::collections::HashSet;
 
 #[derive(Serialize, Deserialize)]
 pub struct AnalysisResult {
@@ -12,7 +13,8 @@ pub struct AnalysisResult {
 
 #[wasm_bindgen]
 pub struct PrivacyEngine {
-    known_trackers: Vec<String>,
+    // Upgraded to a fast HashSet for O(1) lookups of thousands of domains
+    blocked_domains: HashSet<String>,
 }
 
 #[wasm_bindgen]
@@ -20,13 +22,17 @@ impl PrivacyEngine {
     #[wasm_bindgen(constructor)]
     pub fn new() -> PrivacyEngine {
         PrivacyEngine {
-            known_trackers: vec![
-                "google-analytics.com".to_string(),
-                "doubleclick.net".to_string(),
-                "facebook.net".to_string(),
-                "scorecardresearch.com".to_string(),
-                "adnxs.com".to_string(),
-            ],
+            blocked_domains: HashSet::new(),
+        }
+    }
+
+    // NEW: Allow TypeScript to feed thousands of rules into Rust memory instantly
+    pub fn load_rules(&mut self, rules_string: &str) {
+        for line in rules_string.lines() {
+            let clean_line = line.trim();
+            if !clean_line.is_empty() && !clean_line.starts_with('#') {
+                self.blocked_domains.insert(clean_line.to_string());
+            }
         }
     }
 
@@ -40,12 +46,13 @@ impl PrivacyEngine {
 
         if let Ok(parsed_url) = Url::parse(request_url) {
             if let Some(host) = parsed_url.host_str() {
-                for tracker in &self.known_trackers {
-                    if host.contains(tracker) {
+                // In a production app, you'd check parent domains too (e.g., matching google-analytics.com against sub.google-analytics.com)
+                for domain in &self.blocked_domains {
+                    if host.contains(domain) {
                         result.is_tracker = true;
                         result.risk_score = 85;
                         result.tracker_type = "Tracking/Advertising".to_string();
-                        result.rule_matched = tracker.clone();
+                        result.rule_matched = domain.clone();
                         break;
                     }
                 }
