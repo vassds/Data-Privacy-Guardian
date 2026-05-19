@@ -4,10 +4,11 @@ import browser from 'webextension-polyfill';
 interface StatusResponse {
   enabled: boolean;
   blockedList: string[];
+  totalBlocked: number;
 }
 
 export const Dashboard: React.FC = () => {
-  const [stats, setStats] = useState<StatusResponse>({ enabled: true, blockedList: [] });
+  const [stats, setStats] = useState<StatusResponse>({ enabled: true, blockedList: [], totalBlocked: 0 });
 
   useEffect(() => {
     fetchStats();
@@ -26,19 +27,17 @@ export const Dashboard: React.FC = () => {
 
   async function toggleProtection() {
       await browser.runtime.sendMessage({ action: "TOGGLE_PROTECTION" });
-      fetchStats(); // Refresh UI after toggle
-      // Ask user to reload the page for changes to take effect
+      fetchStats(); 
       browser.tabs.reload(); 
   }
 
-  const score = stats.enabled ? Math.max(0, 100 - stats.blockedList.length * 5) : 0;
+  const score = stats.enabled ? Math.max(0, 100 - stats.totalBlocked * 5) : 0;
 
   return (
     <div style={{ width: '320px', padding: '20px', boxSizing: 'border-box', background: '#ffffff' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px' }}>
           <h3 style={{ margin: 0, color: '#1A237E' }}>Privacy Guardian</h3>
           
-          {/* THE KILL SWITCH */}
           <button 
             onClick={toggleProtection}
             style={{
@@ -59,10 +58,9 @@ export const Dashboard: React.FC = () => {
             <div style={{ padding: '12px', background: '#F5F5F5', borderRadius: '6px' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
                     <span style={{ fontWeight: 500 }}>Threats Blocked</span>
-                    <span style={{ fontWeight: 'bold', color: '#1A237E' }}>{stats.blockedList.length}</span>
+                    <span style={{ fontWeight: 'bold', color: '#1A237E' }}>{stats.totalBlocked}</span>
                 </div>
                 
-                {/* DOMAIN LIST VISIBILITY */}
                 <ul style={{ margin: 0, padding: 0, listStyle: 'none', maxHeight: '120px', overflowY: 'auto', fontSize: '12px', color: '#555' }}>
                     {stats.blockedList.map((domain, idx) => (
                         <li key={idx} style={{ padding: '4px 0', borderBottom: '1px solid #ddd' }}>
